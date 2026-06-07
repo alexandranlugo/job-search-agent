@@ -9,7 +9,7 @@ LOG="/Users/alugo/job-search-agent/logs/pipeline_$(date +%Y-%m-%d).log"
 echo "===== Pipeline started: $(date) =====" >> "$LOG"
 
 echo "Step 1: Scraping Built In NYC..." >> "$LOG"
-/Users/alugo/anaconda3/bin/python ingestion/scrape_builtinnyc.py --pages=10 >> "$LOG" 2>&1
+/Users/alugo/anaconda3/bin/python ingestion/scrape_builtinnyc.py --pages=25 >> "$LOG" 2>&1
 
 echo "Step 2: Scraping target companies..." >> "$LOG"
 /Users/alugo/anaconda3/bin/python ingestion/scrape_greenhouse.py >> "$LOG" 2>&1
