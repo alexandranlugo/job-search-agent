@@ -46,10 +46,10 @@ Score each dimension 1-5, then compute a weighted global score:
 | Dimension | Weight | What to measure |
 |-----------|--------|-----------------|
 | cv_match | 40% | Skills, experience, proof points alignment. Does she have 70%+ of required skills? Check Python, SQL, Tableau, PowerBI, BigQuery, Snowflake, A/B testing, ML. |
-| north_star | 25% | How well does this fit her target archetypes: Storytelling/Insights Analyst, Product Analyst, Data Analyst (Media/Culture), Growth Analyst. Boost if media/music/entertainment/edtech/streaming. |
-| comp | 15% | Salary vs her target $85K-$100K NYC. If no salary listed score 2.5 — unknown comp is a mild negative. If listed and in range score 4-5. If listed above $110K base score 1.5 — signals mid/senior level hire. |
+| north_star | 25% | How well does this fit her target archetypes. Score 4.5+ if: role title is Data Analyst, Product Analyst, Insights Analyst, Growth Analyst, Marketing Analyst, or Analytics Engineer AND requires SQL + Python + dashboarding. Score 3.5-4.0 if role is adjacent (Business Analyst, Operations Analyst, Reporting Analyst) with strong analytics component. Score 2.0-3.0 if role is a stretch (pure data science, pure engineering). Boost +0.5 if company is in media/music/entertainment/edtech/streaming/gaming/culture. |
+| comp | 15% | Salary vs her target $85K-$100K NYC. If no salary listed score 3.0 — unknown comp is neutral, not a penalty. If listed and in range score 4-5. If listed above $110K base score 1.5 — signals mid/senior level hire. |
 | culture | 10% | Remote/hybrid policy, cross-functional work, creative/consumer company, stakeholder-facing role. |
-| red_flags | 10% | Title rules: \"Data Scientist II\", \"Senior\", \"Staff\", \"Lead\" in title = score 1.0. Plain \"Data Scientist\" with no junior/associate qualifier = score 2.0 (likely mid-level). \"Junior\", \"Associate\", \"Entry\" in title = score 4.5. Also deduct for: requires 3+ years explicitly stated, purely backend, no stakeholder work, on-site only outside NYC, missing core tools (Spark, Scala required not preferred). |
+| red_flags | 10% | Title rules: \"Senior\", \"Staff\", \"Lead\", \"II\", \"III\", \"Principal\" in title = score 1.0. \"Junior\", \"Associate\", \"Entry\" in title = score 4.5. Plain title with no seniority qualifier at all (e.g. just \"Data Analyst\" or \"Data Scientist\") = score 3.5 — absence of a junior qualifier is not itself a seniority signal, most entry-level postings don't say \"Junior.\" Only deduct further for explicit hard signals: requires 3+ years stated outright, purely backend with no stakeholder work, on-site only outside NYC, missing core tools where the posting says required not preferred (Spark, Scala). |
 
 ## Archetype Detection
 
@@ -155,18 +155,6 @@ def run():
                 surfaced_flag
             ))
             con.commit()
-
-            if surfaced_flag:
-                try:
-                    from scoring.generate_resume import generate_pdf
-                    pdf_path = generate_pdf(p["id"])
-                    if pdf_path:
-                        cur.execute("UPDATE evaluations SET resume_path = ? WHERE posting_id = ?",
-                                    (pdf_path, p["id"]))
-                        con.commit()
-                        print(f"  Resume: {pdf_path}")
-                except Exception as e:
-                    print(f"  Resume generation skipped: {e}")
 
             if surfaced_flag:
                 try:
