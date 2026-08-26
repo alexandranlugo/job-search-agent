@@ -5,7 +5,38 @@ Usage: python output/digest.py
 """
 
 import sqlite3, os, json
-from datetime import datetime
+from datetime import datetime, timezone
+
+def age_tag(posted_at):
+    if not posted_at:
+        return ""
+    try:
+        posted = datetime.fromisoformat(posted_at.replace("Z", "+00:00"))
+        days = (datetime.now(timezone.utc) - posted).days
+    except Exception:
+        return ""
+    if days <= 0:
+        label, color = "Posted today", "#1a7f4b"
+    elif days <= 3:
+        label, color = f"{days}d ago", "#1a7f4b"
+    elif days <= 10:
+        label, color = f"{days}d ago", "#8a6d1f"
+    else:
+        label, color = f"{days}d ago", "#c0392b"
+    return f'<span class="tag" style="color:{color};font-weight:600">🕐 {label}</span>'
+
+import urllib.request
+
+def is_live(url):
+    try:
+        req = urllib.request.Request(url, method="HEAD",
+                                     headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            return r.status < 400
+    except urllib.error.HTTPError:
+        return False
+    except Exception:
+        return True   # network hiccup — don't drop a good roles
 
 DB_PATH  = os.path.join(os.path.dirname(__file__), "..", "db", "pipeline.db")
 OUT_DIR  = os.path.join(os.path.dirname(__file__), "digests")
@@ -72,7 +103,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <h1>Daily Job Digest</h1>
   <a href="../tracker.html" style="font-size:13px;color:#1a5fa5;text-decoration:none;padding:8px 16px;border:1px solid #c0d8f0;border-radius:8px;background:#fff">📋 Application Tracker</a>
 </div>
-<p class="sub">{date} &mdash; {count} role{plural} scored 4.0 or above</p>
+<p class="sub">{date} &mdash; {count} role{plural} scored 3.5 or above</p>
 {cards}
 
 <script>
@@ -98,6 +129,15 @@ function copyOutreach(id) {{
     setTimeout(() => msg.style.display = 'none', 2000);
   }});
 }}
+
+function copyCover(id) {{
+  const text = document.getElementById('covercmd-' + id).textContent;
+  navigator.clipboard.writeText(text).then(() => {{
+    const msg = document.getElementById('cover-msg-' + id);
+    msg.style.display = 'inline';
+    setTimeout(() => msg.style.display = 'none', 3000);
+  }});
+}}
 </script>
 </body>
 </html>"""
@@ -114,6 +154,7 @@ CARD_TEMPLATE = """<div class="card">
     <span class="tag">📍 {location}</span>
     <span class="tag">🔗 {source}</span>
     {salary_tag}
+    {age_badge}
   </div>
   <p class="section-label">Why it fits</p>
   <ul>{match_items}</ul>
@@ -126,8 +167,11 @@ CARD_TEMPLATE = """<div class="card">
   <div class="actions">
     <a class="apply-btn" href="{url}" target="_blank">View &amp; Apply →</a>
     <button class="career-ops-btn" onclick="toggleCareerOps({card_id})">⚡ Evaluate in career-ops</button>
-    <button onclick="copyOutreach({card_id})" style="font-size:12px;padding:8px 14px;border-radius:8px;border:1px solid #ddd;background:#fff;cursor:pointer;">Copy outreach</button>
+    <button class="career-ops-btn" onclick="copyOutreach({card_id})">Copy outreach</button>
+    <button class="career-ops-btn" onclick="copyCover({card_id})">✉️ Cover letter</button>
     <span class="copy-msg" id="copy-msg-{card_id}">Copied!</span>
+    <span class="copy-msg" id="cover-msg-{card_id}">Copied — paste in terminal</span>
+    <span id="covercmd-{card_id}" style="display:none">python scoring/generate_cover_letter.py {posting_id}</span>
   </div>
   <div class="career-ops-box" id="co-box-{card_id}">
     <h4>Run full career-ops evaluation for this role</h4>
@@ -149,14 +193,32 @@ def run():
 
     rows = con.execute("""
         SELECT p.title, p.company, p.location, p.salary, p.url, p.source,
+               p.posted_at,
                e.score, e.grade, e.match_reasons, e.gaps, e.mitigation,
                e.outreach_draft, e.evaluated_at, p.id as posting_id
         FROM evaluations e
         JOIN postings p ON p.id = e.posting_id
+        LEFT JOIN applications a ON a.posting_id = p.id
         WHERE e.surfaced = 1
-        ORDER BY e.score DESC
+        AND e.digested_at IS NULL
+        AND a.id IS NULL
+        ORDER BY p.posted_at DESC, e.score DESC
     """).fetchall()
 
+    live_rows = []
+    for r in rows:
+        if is_live(r["url"]):
+            live_rows.append(r)
+        else:
+            print(f"  [dead link] {r['title']} — {r['company']}")
+            con.execute("UPDATE evaluations SET surfaced=0 WHERE posting_id=?", (r["posting_id"],))
+    rows = live_rows
+
+    # Each surfaced role should appear in exactly one digest, not resurface every
+    # day it stays unapplied — mark everything shown today as sent.
+    for r in rows:
+        con.execute("UPDATE evaluations SET digested_at = datetime('now') WHERE posting_id=?", (r["posting_id"],))
+    con.commit()
     con.close()
 
     date_str = datetime.now().strftime("%B %d, %Y")
@@ -164,7 +226,7 @@ def run():
     plural   = "s" if count != 1 else ""
 
     if count == 0:
-        cards = '<div class="empty">No roles scored 4.0+ today. Check back tomorrow.</div>'
+        cards = '<div class="empty">No roles scored 3.5+ today. Check back tomorrow.</div>'
     else:
         cards = ""
         for i, r in enumerate(rows):
@@ -174,6 +236,7 @@ def run():
             match_items = "".join(f"<li>{m}</li>" for m in match_reasons)
             gap_items   = "".join(f"<li>{g}</li>" for g in gaps)
             salary_tag  = f'<span class="tag">💰 {r["salary"]}</span>' if r["salary"] else ""
+            age_badge   = age_tag(r["posted_at"])
 
             cards += CARD_TEMPLATE.format(
                 card_id     = i,
@@ -182,13 +245,15 @@ def run():
                 location    = r["location"] or "Not specified",
                 source      = r["source"],
                 salary_tag  = salary_tag,
+                age_badge  = age_badge,
                 score       = r["score"],
                 grade       = r["grade"],
                 match_items = match_items,
                 gap_items   = gap_items,
                 mitigation  = r["mitigation"] or "",
                 outreach    = r["outreach_draft"] or "",
-                url         = r["url"]
+                url         = r["url"],
+                posting_id  = r["posting_id"]
             )
 
     html = HTML_TEMPLATE.format(

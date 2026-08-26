@@ -8,6 +8,19 @@ import sqlite3, hashlib, os, sys
 from playwright.sync_api import sync_playwright
 from dotenv import load_dotenv
 
+import re
+from datetime import datetime, timedelta, timezone
+
+def parse_age(card_text):
+    m = re.search(r"(\d+)\s+days?\s+ago", card_text, re.I)
+    if m:
+        return (datetime.now(timezone.utc) - timedelta(days=int(m.group(1)))).isoformat()
+    if re.search(r"\byesterday\b", card_text, re.I):
+        return (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    if re.search(r"(hours?|minutes?)\s+ago|today|just posted", card_text, re.I):
+        return datetime.now(timezone.utc).isoformat()
+    return ""
+
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 DB_PATH  = os.path.join(os.path.dirname(__file__), "..", "db", "pipeline.db")
@@ -24,7 +37,10 @@ POSITIVE_KEYWORDS = [
 NEGATIVE_KEYWORDS = [
     "senior", "sr.", "sr ", "principal", "director", "manager", "lead",
     "head of", "vp ", "vice president", "architect", "expert",
-    "staff engineer", "staff data engineer", "staff software"
+    "staff", " ii", " iii", " iv", "deal desk", "aml", "compliance", "payroll", "procurement", "purchasing",
+    "compensation", "fp&a", "financial planning", "employee lifecycle",
+    "sales operations", "order operations", "corporate development", "revenue strategy",
+    "pricing","sales revenue"
 ]
 
 LOCATION_KEYWORDS = ["new york", "nyc", "remote", "hybrid", "usa"]
@@ -36,23 +52,40 @@ NON_NYC_CITIES = [
     "miami", "boise", "stamford", "littleton", "long beach", "denver", "englewood"
 ]
 
-def passes_filters(title, location):
+NYC_TOKENS = ["new york", "nyc", ", ny", "brooklyn", "manhattan"]
+
+# BuiltIn tags each card with an explicit level ("Entry level", "Junior", "Mid
+# level", "Senior level", "Expert/Leader") — a more reliable seniority signal
+# than scanning the title text alone, since plenty of senior roles have plain
+# titles ("Analyst, Advanced Analytics") that the title keyword filter misses.
+KNOWN_SENIORITY_TAGS = {"entry level", "junior", "mid level", "senior level", "expert/leader"}
+REJECT_SENIORITY_TAGS = {"senior level", "expert/leader"}
+
+def extract_seniority_tag(lines):
+    if lines and lines[-1].strip().lower() in KNOWN_SENIORITY_TAGS:
+        return lines[-1].strip().lower()
+    return ""
+
+def passes_filters(title, location, seniority_tag=""):
     title_lower = title.lower()
     location_lower = location.lower() if location else ""
 
+    if seniority_tag in REJECT_SENIORITY_TAGS:
+        return False
     if not any(k in title_lower for k in POSITIVE_KEYWORDS):
         return False
     if any(k in title_lower for k in NEGATIVE_KEYWORDS):
         return False
-    if not any(k in location_lower for k in LOCATION_KEYWORDS):
+
+    if any(k in location_lower for k in NYC_TOKENS):
+        return True
+    if any(city in location_lower for city in NON_NYC_CITIES):
         return False
-
-    # Reject non-NYC cities unless remote is explicitly mentioned
-    if "remote" not in location_lower:
-        if any(city in location_lower for city in NON_NYC_CITIES):
-            return False
-
-    return True
+    if "remote" in location_lower:
+        # Candidate profile is explicitly open to remote-only, regardless of city.
+        return True
+    # A bare "Hybrid" tag (no city) means hybrid-at-HQ, which usually isn't NYC.
+    return False
 
 
 def url_hash(url):
@@ -78,7 +111,7 @@ def is_duplicate_title(cur, company, title):
 
 def fetch_full_description(page, url):
     try:
-        page.goto(url, wait_until="networkidle", timeout=30000)
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
         page.wait_for_timeout(2000)
         desc_el = page.query_selector('[data-id="job-description"]')
         if desc_el:
@@ -99,8 +132,8 @@ def save_posting(cur, posting):
     try:
         cur.execute("""
             INSERT INTO postings
-                (url, url_hash, company, title, location, raw_text, source, filtered_in)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (url, url_hash, company, title, location, raw_text, source, posted_at, filtered_in)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             posting["url"],
             url_hash(posting["url"]),
@@ -108,11 +141,17 @@ def save_posting(cur, posting):
             posting["title"],
             posting["location"],
             posting["raw_text"],
-            "builtinnyc",
+            posting["source"],
+            posting.get("posted_at", ""),
             1 if posting["filtered_in"] else 0
         ))
         return True
     except sqlite3.IntegrityError:
+        if posting["filtered_in"]:
+            cur.execute("""
+                UPDATE postings SET filtered_in = 1, raw_text = ?, posted_at = ?
+                WHERE url = ? AND filtered_in = 0
+            """, (posting["raw_text"][:8000], posting.get("posted_at", ""), posting["url"]))
         return False
 
 
@@ -132,7 +171,14 @@ def scrape(max_pages=10):
             url = BASE_URL.format(page_num)
             print(f"\nPage {page_num}: {url}")
 
-            list_page.goto(url, wait_until="networkidle", timeout=60000)
+            try:
+                list_page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                list_page.wait_for_selector('[data-id="job-card"]', timeout=15000)
+            except Exception as e:
+                print(f"  Could not load page {page_num}: {type(e).__name__}: {e}")
+                print("  Skipping this page, trying the next one.")
+                continue
+
             list_page.wait_for_timeout(2000)
             for _ in range(3):
                 list_page.keyboard.press("End")
@@ -144,8 +190,6 @@ def scrape(max_pages=10):
             if not job_cards:
                 print("  No cards found, stopping.")
                 break
-
-            new_on_page = 0
 
             for card in job_cards:
                 try:
@@ -160,6 +204,8 @@ def scrape(max_pages=10):
                     card_text = card.inner_text().strip()
                     lines     = [l.strip() for l in card_text.split("\n") if l.strip()]
                     company   = lines[0] if lines else "Unknown"
+                    posted_at = parse_age(card_text)
+                    seniority_tag = extract_seniority_tag(lines)
 
                     location = ""
                     for line in lines:
@@ -167,29 +213,17 @@ def scrape(max_pages=10):
                             location = line
                             break
 
-                    filtered = passes_filters(title, location)
+                    filtered = passes_filters(title, location, seniority_tag)
                     status   = "PASS" if filtered else "skip"
-                    print(f"  [{status}] {title} — {company} ({location})")
+                    tag_note = f" [{seniority_tag}]" if seniority_tag else ""
+                    print(f"  [{status}] {title} — {company} ({location}){tag_note}")
 
                     if filtered:
                         print(f"    Fetching full description...")
                         full_text = fetch_full_description(desc_page, posting_url)
                         raw_text  = full_text if full_text else card_text
                         # Re-check location against full description text
-                        full_lower = raw_text.lower()
-                        # Only check first 600 chars for remote — avoids company boilerplate
-                        top_lower = full_lower[:600]
-                        has_remote = (
-                            "remote" in top_lower or
-                            "work from anywhere" in top_lower or
-                            "fully remote" in full_lower[:300]
-                        )
-                        has_non_nyc = any(city in full_lower for city in NON_NYC_CITIES)
-                        if has_non_nyc and not has_remote:
-                            print(f"    Skipping — non-NYC city found in description")
-                            filtered = False
-                        else:
-                            passed_filter += 1
+                        passed_filter += 1
                     else:
                         raw_text = card_text
 
@@ -199,7 +233,9 @@ def scrape(max_pages=10):
                         "title":       title,
                         "location":    location,
                         "raw_text":    raw_text,
-                        "filtered_in": filtered
+                        "source":      "builtinnyc",
+                        "filtered_in": filtered,
+                        "posted_at":   posted_at
                     }
                     
                     if filtered and is_duplicate_title(cur, company, title):
@@ -209,17 +245,12 @@ def scrape(max_pages=10):
                     is_new = save_posting(cur, posting)
                     if is_new:
                         new_total += 1
-                        new_on_page += 1
 
                 except Exception as e:
-                    print(f"    Error: {e}")
+                    print(f"    Error: {type(e).__name__}: {e}")
                     continue
 
             con.commit()
-
-            if new_on_page == 0:
-                print("  No new postings, stopping.")
-                break
 
         browser.close()
 

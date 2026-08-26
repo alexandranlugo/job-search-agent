@@ -9,6 +9,7 @@ import sqlite3, hashlib, os, json, time
 import urllib.request, urllib.error
 import yaml
 from dotenv import load_dotenv
+from datetime import datetime, timezone
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
@@ -25,15 +26,12 @@ POSITIVE_KEYWORDS = [
 NEGATIVE_KEYWORDS = [
     "senior", "sr.", "sr ", "principal", "director", "manager", "lead",
     "head of", "vp ", "vice president", "architect", "expert",
-    "staff engineer", "staff data engineer", "staff software"
+    "staff", " ii", " iii", " iv", "deal desk", "aml", "compliance", "payroll", "procurement", "purchasing",
+    "compensation", "fp&a", "financial planning", "employee lifecycle",
+    "sales operations", "order operations", "corporate development", "revenue strategy",
+    "pricing","sales revenue"
 ]
 
-NON_NYC_CITIES = [
-    "boston", "chicago", "san francisco", "seattle", "austin",
-    "los angeles", "atlanta", "denver", "dallas", "phoenix",
-    "miami", "boise", "stamford", "littleton", "long beach",
-    "englewood", "los angeles", "nashville", "portland"
-]
 
 
 def passes_title_filter(title):
@@ -45,35 +43,34 @@ def passes_title_filter(title):
     return True
 
 
+NYC_TOKENS = ["new york", "nyc", ", ny", "brooklyn", "manhattan"]
+
 def passes_location_filter(location, description=""):
-    if not location and not description:
+    loc_lower = (location or "").lower()
+    desc_lower = (description or "").lower()[:1500]
+
+    if any(k in loc_lower for k in NYC_TOKENS):
         return True
-    loc_lower  = location.lower() if location else ""
-    desc_lower = description.lower()[:600] if description else ""
-    combined   = loc_lower + " " + desc_lower
-
-    has_nyc    = any(k in combined for k in ["new york", "nyc", "remote", "hybrid"])
-    has_remote = "remote" in combined
-    has_non_nyc = any(city in combined for city in NON_NYC_CITIES)
-
-    if not has_nyc:
-        return False
-    if has_non_nyc and not has_remote:
-        return False
-    return True
-
+    if any(k in desc_lower for k in NYC_TOKENS):
+        return True
+    if "remote" in loc_lower:
+        # Candidate profile is explicitly open to remote-only, regardless of city.
+        return True
+    # "Hybrid" alone (or an empty/unrecognized location) doesn't tell us the
+    # office city — a bare "Hybrid" tag usually means hybrid-at-HQ, which for
+    # most tracked companies isn't NYC. Only pass if NYC was named somewhere.
+    return False
 
 def url_hash(url):
     return hashlib.md5(url.encode()).hexdigest()
 
 
 def save_posting(cur, posting):
-    # Deduplicate by URL hash (exact match)
     try:
         cur.execute("""
             INSERT INTO postings
-                (url, url_hash, company, title, location, raw_text, source, filtered_in)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (url, url_hash, company, title, location, raw_text, source, posted_at, filtered_in)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             posting["url"],
             url_hash(posting["url"]),
@@ -82,10 +79,16 @@ def save_posting(cur, posting):
             posting["location"],
             posting["raw_text"],
             posting["source"],
+            posting.get("posted_at", ""),
             1 if posting["filtered_in"] else 0
         ))
         return True
     except sqlite3.IntegrityError:
+        if posting["filtered_in"]:
+            cur.execute("""
+                UPDATE postings SET filtered_in = 1, raw_text = ?, posted_at = ?
+                WHERE url = ? AND filtered_in = 0
+            """, (posting["raw_text"][:8000], posting.get("posted_at", ""), posting["url"]))
         return False
 
 
@@ -131,10 +134,11 @@ def scrape_greenhouse(company_name, api_url, cur):
             location = job.get("location", {}).get("name", "")
             url      = job.get("absolute_url", "")
             raw_text = f"{title}\n{location}\n{job.get('content','')}"
+            posted_at = job.get("updated_at", "")
 
             if not passes_title_filter(title):
                 continue
-            if not passes_location_filter(location):
+            if not passes_location_filter(location, job.get('content', '')):
                 continue
 
             filtered = True
@@ -148,6 +152,7 @@ def scrape_greenhouse(company_name, api_url, cur):
                 "location":    location,
                 "raw_text":    raw_text[:8000],
                 "source":      "greenhouse",
+                "posted_at":   posted_at,
                 "filtered_in": filtered
             }
             if is_duplicate_title(cur, company_name, title):
@@ -190,6 +195,9 @@ def scrape_lever(company_name, careers_url, cur):
             location = job.get("categories", {}).get("location", "")
             url      = job.get("hostedUrl", "")
             desc     = job.get("descriptionPlain", "") or job.get("description", "")
+            ts = job.get("createdAt")
+            posted_at = datetime.fromtimestamp(ts/1000, timezone.utc).isoformat() if ts else ""
+
 
             if not passes_title_filter(title):
                 continue
@@ -207,6 +215,7 @@ def scrape_lever(company_name, careers_url, cur):
                 "location":    location,
                 "raw_text":    raw_text[:8000],
                 "source":      "lever",
+                "posted_at":   posted_at,
                 "filtered_in": True
             }
             if is_duplicate_title(cur, company_name, title):
@@ -228,31 +237,25 @@ def scrape_ashby(company_name, careers_url, cur):
     passed = 0
     try:
         slug = careers_url.rstrip("/").split("/")[-1]
-        api_url = f"https://jobs.ashbyhq.com/api/non-user-graphql"
-        payload = json.dumps({
-            "operationName": "ApiJobBoardWithTeams",
-            "variables": {"organizationHostedJobsPageName": slug},
-            "query": "query ApiJobBoardWithTeams($organizationHostedJobsPageName: String!) { jobBoard: publishedJobBoard(organizationHostedJobsPageName: $organizationHostedJobsPageName) { jobPostings { id title locationName employmentType jobRequisitionId descriptionPlain } } }"
-        }).encode()
-
-        req = urllib.request.Request(
-            api_url,
-            data=payload,
-            headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
-        )
-        with urllib.request.urlopen(req, timeout=15) as r:
-            data = json.loads(r.read().decode())
-
-        jobs = data.get("data", {}).get("jobBoard", {}).get("jobPostings", [])
-        print(f"  {company_name} (Ashby): {len(jobs)} total jobs")
+        api_url = f"https://api.ashbyhq.com/posting-api/job-board/{slug}"
+        data = fetch_json(api_url)
+        jobs = data.get("jobs", [])
+        if not jobs:
+            print(f"  {company_name} (Ashby): 0 jobs — VERIFY SLUG '{slug}'")
+        else:
+            print(f"  {company_name} (Ashby): {len(jobs)} total jobs")
 
         for job in jobs:
-            title    = job.get("title", "")
-            location = job.get("locationName", "")
-            job_id   = job.get("id", "")
-            desc     = job.get("descriptionPlain", "")
-            url      = f"https://jobs.ashbyhq.com/{slug}/{job_id}"
+            title    = job.get("title", "").strip()
+            location = job.get("location", "")
+            secondary = " ".join(
+                s.get("location", "") for s in job.get("secondaryLocations", []) or []
+            )
+            location = f"{location} {secondary}".strip()
+            url      = job.get("jobUrl", "") or job.get("applyUrl", "")
+            desc     = job.get("descriptionPlain", "") or job.get("descriptionHtml", "")
             raw_text = f"{title}\n{location}\n{desc}"
+            posted_at = job.get("publishedAt", "")
 
             if not passes_title_filter(title):
                 continue
@@ -268,6 +271,7 @@ def scrape_ashby(company_name, careers_url, cur):
                 "location":    location,
                 "raw_text":    raw_text[:8000],
                 "source":      "ashby",
+                "posted_at":   posted_at,
                 "filtered_in": True
             }
             if is_duplicate_title(cur, company_name, title):
@@ -309,7 +313,7 @@ def run():
             new, passed = scrape_ashby(name, careers_url, cur)
         elif "greenhouse.io" in careers_url:
             slug    = careers_url.rstrip("/").split("/")[-1]
-            api_url = f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs"
+            api_url = f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true"
             new, passed = scrape_greenhouse(name, api_url, cur)
         else:
             print(f"  {name}: no supported API URL, skipping")
@@ -324,43 +328,34 @@ def run():
     print(f"\nDone. {total_new} new postings saved. {total_passed} passed filters.")
     print("Next: python scoring/evaluate.py")
 
-
-if __name__ == "__main__":
-    run()
-
-
 def run_extra():
     """Scrape additional companies with known API slugs not in portals.yml."""
 
     EXTRA_GREENHOUSE = {
-        "Sony Music Entertainment": "sonymusicentertainment",
-        "Luminate":                 "luminate",
+        # Sony Music Entertainment, Luminate now wired directly in portals.yml — scraped via run()
+        # anchor bench — verify each token returns 200 before adding
+        "Datadog":                  "datadog",
+        "MongoDB":                  "mongodb",
+        "Squarespace":              "squarespace",
+        "Peloton":                  "peloton",
+        "Betterment":     "betterment",
+        "Justworks":      "justworks",
+        "Yext":           "yext",
+        "Braze":          "braze",
+        "Attentive":      "attentive",
+        "DoubleVerify":   "doubleverify",
+        "Rent the Runway": "renttherunway",
+        "Sisense":        "sisense",
+        "Dataiku":        "dataiku",
     }
 
     EXTRA_ASHBY = {
-        "New York Times":     "nytimes",
-        "Warner Music Group": "warnermusicgroup",
-        "AMC Networks":       "amcnetworks",
-        "SoundCloud":         "soundcloud",
-        "Pandora / SiriusXM": "siriusxm",
-        "Substack":           "substack",
-        "Roc Nation":         "rocnation",
-        "Chartmetric":        "chartmetric",
-        "Qloo":               "qloo",
-        "Audiomack":          "audiomack",
-        "ASCAP":              "ascap",
-        "Activate Consulting": "activateconsulting",
-        "Adelaide Metrics":   "adelaidemetrics",
-        "Luminary":           "luminary",
-        "Letterboxd":         "letterboxd",
-        "Bandsintown":        "bandsintown",
-        "NewsWhip":           "newswhip",
-        "Pitchfork / Conde Nast": "condenast",
+        # Substack now wired directly in portals.yml — scraped via run()
+        "Ramp": "ramp",
     }
 
     EXTRA_LEVER = {
-        "The Athletic (NYT)": "theathletic",
-        "JustWatch":          "justwatch",
+        # The Athletic (NYT), JustWatch now wired directly in portals.yml — scraped via run()
     }
 
     con = sqlite3.connect(DB_PATH)
@@ -372,7 +367,7 @@ def run_extra():
     print("\nScanning extra companies with known API slugs...\n")
 
     for name, slug in EXTRA_GREENHOUSE.items():
-        api_url = f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs"
+        api_url = f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true"
         new, passed = scrape_greenhouse(name, api_url, cur)
         total_new += new; total_passed += passed
         con.commit(); time.sleep(0.5)

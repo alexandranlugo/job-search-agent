@@ -2,6 +2,7 @@
 db/*.db
 output/resumes/
 output/digests/
+output/cover_letters/
 logs/
 __pycache__/
 *.pyc
