@@ -128,18 +128,6 @@ Run manually:
 bash run_pipeline.sh
 ```
 
-Or let the cron job run it at 7AM daily:
-```bash
-(crontab -l; echo "0 7 * * * /path/to/job-search-agent/run_pipeline.sh") | crontab -
-```
-
-cron runs with a minimal `PATH` and won't see a conda or venv interpreter. If the
-cron run fails but a manual run works, point it at the right Python explicitly:
-
-```bash
-PYTHON=/path/to/your/python bash run_pipeline.sh
-```
-
 Open today's digest:
 ```bash
 open output/digests/digest_$(date +%Y-%m-%d).html
@@ -149,6 +137,97 @@ Add a specific job posting manually:
 ```bash
 python ingestion/add_job.py <job-url>
 ```
+
+## Running it daily
+
+The whole point is not having to remember to run it. Pick one of the two below —
+you only need one.
+
+First, confirm which interpreter to use. Schedulers run with a minimal `PATH` and
+won't find a conda or venv Python, which is the most common reason a scheduled run
+fails while a manual run works:
+
+```bash
+which python3      # use this full path below
+```
+
+### macOS — launchd (recommended)
+
+cron still exists on macOS but silently fails for a lot of people, because modern
+macOS requires Full Disk Access for `/usr/sbin/cron` before it can read your files.
+launchd is the supported path and reports errors properly.
+
+Create `~/Library/LaunchAgents/com.yourname.job-search-digest.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.yourname.job-search-digest</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/absolute/path/to/job-search-agent/run_pipeline.sh</string>
+    </array>
+    <!-- Runs at 7:00 AM daily. If the machine is asleep at 7, launchd runs it
+         at the next wake rather than skipping the day. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key><integer>7</integer>
+        <key>Minute</key><integer>0</integer>
+    </dict>
+    <!-- Schedulers don't inherit your shell PATH — point at a real interpreter. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHON</key><string>/absolute/path/to/python3</string>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/absolute/path/to/job-search-agent/logs/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/absolute/path/to/job-search-agent/logs/launchd.err.log</string>
+</dict>
+</plist>
+```
+
+Then load it:
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.yourname.job-search-digest.plist
+launchctl list | grep job-search-digest      # confirm it's registered
+```
+
+To turn it off later:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.yourname.job-search-digest.plist
+```
+
+Unloading stops it now, but anything left in `~/Library/LaunchAgents` reloads at
+your next login — rename or delete the plist to disable it for good.
+
+### Linux — cron
+
+```bash
+(crontab -l 2>/dev/null; \
+ echo "0 7 * * * PYTHON=/usr/bin/python3 /absolute/path/to/job-search-agent/run_pipeline.sh") \
+ | crontab -
+```
+
+Use absolute paths throughout; cron does not run from your repo directory.
+
+### Checking it actually ran
+
+Every run appends to a dated log, so a missing log means it never fired:
+
+```bash
+tail -40 logs/pipeline_$(date +%Y-%m-%d).log
+```
+
+The pipeline emails you every day it runs, including days with zero matches
+("no new matches today"). That's deliberate — a silent inbox means something
+broke, rather than leaving you guessing whether it was just a quiet day.
 
 ## Why I built this
 
