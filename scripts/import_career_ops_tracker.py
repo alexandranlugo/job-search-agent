@@ -1,13 +1,21 @@
 """
 scripts/import_career_ops_tracker.py
-Imports applications from career-ops data/applications.md into the pipeline database.
+Imports applications from a career-ops data/applications.md tracker into the
+pipeline database, so roles you've already applied to stop showing up as new.
+
+Optional — only useful if you also use career-ops (github.com/santifer/career-ops).
+Set CAREER_OPS_TRACKER in .env to your applications.md path.
+
 Usage: python scripts/import_career_ops_tracker.py
 """
 
-import sqlite3, os, re, hashlib
+import sqlite3, os, re, hashlib, sys
+from dotenv import load_dotenv
 
-DB_PATH     = os.path.join(os.path.dirname(__file__), "..", "db", "pipeline.db")
-TRACKER_PATH = "/Users/alugo/career-ops/data/applications.md"
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+
+DB_PATH      = os.path.join(os.path.dirname(__file__), "..", "db", "pipeline.db")
+TRACKER_PATH = os.getenv("CAREER_OPS_TRACKER", "")
 
 STATUS_MAP = {
     "evaluated": "to_apply",
@@ -29,6 +37,14 @@ def parse_score(score_str):
         return 0.0
 
 def run():
+    if not TRACKER_PATH:
+        print("CAREER_OPS_TRACKER is not set in .env — nothing to import.")
+        print("This script is optional; it only applies if you also use career-ops.")
+        sys.exit(0)
+    if not os.path.exists(TRACKER_PATH):
+        print(f"No tracker found at {TRACKER_PATH}")
+        sys.exit(1)
+
     with open(TRACKER_PATH) as f:
         lines = f.readlines()
 

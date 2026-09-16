@@ -1,6 +1,6 @@
 """
 scoring/generate_resume.py
-Generates a tailored PDF resume for a surfaced posting using the career-ops template.
+Generates a tailored one-page PDF resume for a surfaced posting, rendered with Playwright.
 Usage: python scoring/generate_resume.py <posting_id>
 """
 
@@ -18,7 +18,6 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 DB_PATH        = os.path.join(os.path.dirname(__file__), "..", "db", "pipeline.db")
 CV_PATH        = os.path.join(os.path.dirname(__file__), "..", "config", "cv.md")
 PROF_PATH      = os.path.join(os.path.dirname(__file__), "..", "config", "profile.yml")
-TEMPLATE_PATH = "/Users/alugo/career-ops/templates/cv-template.html"
 
 client = Anthropic()
 
@@ -29,8 +28,10 @@ def load_file(path):
 
 
 def generate_resume_content(cv, profile, posting):
-    prompt = f"""You are generating a tailored, ATS-optimized resume for Alexandra Lugo.
-Follow her resume rules exactly — these are non-negotiable.
+    prompt = f"""You are generating a tailored, ATS-optimized resume for the candidate
+described in the CV and profile below. Their name, contact details, and experience all
+come from there — never invent any of it. Follow the resume rules exactly; they are
+non-negotiable.
 
 ## Resume Rules (from cv.md — follow exactly)
 
@@ -43,8 +44,8 @@ Follow her resume rules exactly — these are non-negotiable.
 - Maximum 5 skills lines.
 
 ### Content
-- STRICT reverse chronological order. Current roles (end date "Present") come FIRST, before any role that has ended; within each group sort by start date descending. Pfizer (Jul 2026–Present) and micro1 (Jun 2026–Present) are current; Sallie Mae ended May 2026 and comes after them.
-- Choose the 3 jobs most relevant to this role. NYU Athletics is lowest priority.
+- STRICT reverse chronological order. Current roles (end date "Present") come FIRST, before any role that has ended; within each group sort by start date descending. Read the dates from the CV — never assume which roles are current.
+- Choose the 3 jobs most relevant to this role, preferring current roles over ended ones when relevance is close. Never imply an employment gap.
 - Lead every bullet with a strong action verb.
 - Always include dollar figures and percentages where available.
 - Skills split into separate labeled lines by category; plain text, comma separated.

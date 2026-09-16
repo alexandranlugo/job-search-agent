@@ -1,0 +1,117 @@
+# Company and filter configuration.
+#
+#   cp config/portals.example.yml config/portals.yml
+#
+# Then replace everything below with companies and keywords that fit YOUR search.
+# The companies here are only a starter set to prove the pipeline works end to end.
+
+# ── Title filter ────────────────────────────────────────────────────────────
+# A posting must match at least one `positive` keyword and none of the
+# `negative` ones. Matching is case-insensitive substring matching on the title.
+title_filter:
+  positive:
+    - "data analyst"
+    - "product analyst"
+    - "insights analyst"
+    - "business analyst"
+    - "analytics engineer"
+    - "bi analyst"
+    - "data scientist"
+    - "analyst"
+    - "analytics"
+  negative:
+    # Seniority you don't want. " ii" / " iii" have a leading space on purpose,
+    # so they match "Analyst II" without also matching e.g. "Ohio".
+    - "senior"
+    - "sr."
+    - "sr "
+    - "principal"
+    - "director"
+    - "manager"
+    - "lead"
+    - "head of"
+    - "vp "
+    - "vice president"
+    - "architect"
+    - "staff"
+    - " ii"
+    - " iii"
+    - " iv"
+    # Functions outside the target — trim or extend for your own search.
+    - "compliance"
+    - "payroll"
+    - "procurement"
+    - "fp&a"
+    - "sales operations"
+
+# ── Location filter ─────────────────────────────────────────────────────────
+# Cities/terms that count as "local" for you. A posting passes if its location
+# (or job description) names one of these, or if it's genuinely remote.
+# A bare "Hybrid" tag with no city named does NOT pass — hybrid almost always
+# means hybrid at the company's own HQ, which may be nowhere near you.
+location_filter:
+  local_terms:
+    - "new york"
+    - "nyc"
+    - ", ny"
+    - "brooklyn"
+    - "manhattan"
+  # Cities that should be rejected outright even if the title matches.
+  exclude_cities:
+    - "boston"
+    - "chicago"
+    - "san francisco"
+    - "seattle"
+    - "austin"
+    - "los angeles"
+    - "atlanta"
+    - "denver"
+    - "dallas"
+
+# ── Tracked companies ───────────────────────────────────────────────────────
+# Companies with a real Greenhouse / Lever / Ashby board.
+#
+# Finding a board: the slug is the last path segment of the company's job board
+# URL. Verify before adding — these should return HTTP 200:
+#   Greenhouse  https://boards-api.greenhouse.io/v1/boards/<slug>/jobs
+#   Lever       https://api.lever.co/v0/postings/<slug>?mode=json
+#   Ashby       https://api.ashbyhq.com/posting-api/job-board/<slug>
+#
+# Greenhouse needs an explicit `api:` line. Lever and Ashby are detected from
+# the careers_url, so the slug alone is enough.
+tracked_companies:
+  - name: Datadog
+    careers_url: https://job-boards.greenhouse.io/datadog
+    api: https://boards-api.greenhouse.io/v1/boards/datadog/jobs
+    notes: "Example entry — replace with a company you actually care about."
+    enabled: true
+
+  - name: Squarespace
+    careers_url: https://job-boards.greenhouse.io/squarespace
+    api: https://boards-api.greenhouse.io/v1/boards/squarespace/jobs
+    enabled: true
+
+  - name: Substack
+    careers_url: https://jobs.ashbyhq.com/substack
+    enabled: true
+
+  - name: Ramp
+    careers_url: https://jobs.ashbyhq.com/ramp
+    enabled: true
+
+  - name: Spotify
+    careers_url: https://jobs.lever.co/spotify
+    enabled: true
+
+# ── Extra companies ─────────────────────────────────────────────────────────
+# Shorthand for companies you want scanned without a full entry above — just
+# "Display Name": "board-slug". Same verification rules apply.
+extra_companies:
+  greenhouse:
+    MongoDB: mongodb
+    Peloton: peloton
+    Betterment: betterment
+    Braze: braze
+    Dataiku: dataiku
+  lever: {}
+  ashby: {}

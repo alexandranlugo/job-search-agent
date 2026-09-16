@@ -28,8 +28,9 @@ def load_file(path):
 
 
 def generate_letter_content(cv, profile, posting):
-    prompt = f"""You are writing a cover letter for Alexandra Lugo, a May 2026 NYU graduate
-(B.A. Data Science + Business Studies). Write it so it sounds like a real person wrote it —
+    prompt = f"""You are writing a cover letter for the candidate described below.
+Use only what the CV and profile actually state — their name, background, and
+experience all come from there. Write it so it sounds like a real person wrote it —
 specific, warm, and direct. Not corporate, not breathless.
 
 ## Candidate CV

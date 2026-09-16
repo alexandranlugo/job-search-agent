@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 import re
 from datetime import datetime, timedelta, timezone
 
+from filters import load_filters
+
 def parse_age(card_text):
     m = re.search(r"(\d+)\s+days?\s+ago", card_text, re.I)
     if m:
@@ -26,33 +28,9 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 DB_PATH  = os.path.join(os.path.dirname(__file__), "..", "db", "pipeline.db")
 BASE_URL = "https://builtin.com/jobs/nyc/data-analytics?page={}"
 
-POSITIVE_KEYWORDS = [
-    "data analyst", "product analyst", "insights analyst", "growth analyst",
-    "business analyst", "analytics engineer", "bi analyst", "junior data scientist",
-    "storytelling analyst", "marketing analyst", "decision analytics",
-    "analyst", "analytics", "intelligence analyst", "data scientist",
-    "data specialist", "data insights"
-]
-
-NEGATIVE_KEYWORDS = [
-    "senior", "sr.", "sr ", "principal", "director", "manager", "lead",
-    "head of", "vp ", "vice president", "architect", "expert",
-    "staff", " ii", " iii", " iv", "deal desk", "aml", "compliance", "payroll", "procurement", "purchasing",
-    "compensation", "fp&a", "financial planning", "employee lifecycle",
-    "sales operations", "order operations", "corporate development", "revenue strategy",
-    "pricing","sales revenue"
-]
-
-LOCATION_KEYWORDS = ["new york", "nyc", "remote", "hybrid", "usa"]
-
-
-NON_NYC_CITIES = [
-    "boston", "chicago", "san francisco", "seattle", "austin",
-    "los angeles", "atlanta", "denver", "dallas", "phoenix",
-    "miami", "boise", "stamford", "littleton", "long beach", "denver", "englewood"
-]
-
-NYC_TOKENS = ["new york", "nyc", ", ny", "brooklyn", "manhattan"]
+# Title and location keywords come from the portals config when present, so the
+# pipeline can be retargeted without editing Python. See ingestion/filters.py.
+POSITIVE_KEYWORDS, NEGATIVE_KEYWORDS, NYC_TOKENS, NON_NYC_CITIES = load_filters()
 
 # BuiltIn tags each card with an explicit level ("Entry level", "Junior", "Mid
 # level", "Senior level", "Expert/Leader") — a more reliable seniority signal

@@ -9,6 +9,7 @@ __pycache__/
 .DS_Store
 config/cv.md
 config/profile.yml
+config/portals.yml
 config/wellfound_cookies.json
 output/tracker.html
 output/digests/

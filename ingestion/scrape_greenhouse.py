@@ -7,31 +7,19 @@ Usage: python ingestion/scrape_greenhouse.py
 
 import sqlite3, hashlib, os, json, time
 import urllib.request, urllib.error
-import yaml
 from dotenv import load_dotenv
 from datetime import datetime, timezone
 
+from filters import load_portals, load_filters
+
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
-DB_PATH      = os.path.join(os.path.dirname(__file__), "..", "db", "pipeline.db")
-PORTALS_PATH = "/Users/alugo/career-ops/portals.yml"
+BASE_DIR = os.path.join(os.path.dirname(__file__), "..")
+DB_PATH  = os.path.join(BASE_DIR, "db", "pipeline.db")
 
-POSITIVE_KEYWORDS = [
-    "data analyst", "product analyst", "insights analyst", "growth analyst",
-    "business analyst", "analytics engineer", "bi analyst", "junior data scientist",
-    "storytelling analyst", "marketing analyst", "intelligence analyst",
-    "analyst", "analytics", "data scientist", "data specialist", "data insights"
-]
-
-NEGATIVE_KEYWORDS = [
-    "senior", "sr.", "sr ", "principal", "director", "manager", "lead",
-    "head of", "vp ", "vice president", "architect", "expert",
-    "staff", " ii", " iii", " iv", "deal desk", "aml", "compliance", "payroll", "procurement", "purchasing",
-    "compensation", "fp&a", "financial planning", "employee lifecycle",
-    "sales operations", "order operations", "corporate development", "revenue strategy",
-    "pricing","sales revenue"
-]
-
+# Title and location keywords come from the portals config when present, so the
+# pipeline can be retargeted without editing Python. See ingestion/filters.py.
+POSITIVE_KEYWORDS, NEGATIVE_KEYWORDS, NYC_TOKENS, _EXCLUDE_CITIES = load_filters()
 
 
 def passes_title_filter(title):
@@ -43,22 +31,26 @@ def passes_title_filter(title):
     return True
 
 
-NYC_TOKENS = ["new york", "nyc", ", ny", "brooklyn", "manhattan"]
-
 def passes_location_filter(location, description=""):
-    loc_lower = (location or "").lower()
+    loc_lower  = (location or "").lower()
     desc_lower = (description or "").lower()[:1500]
 
     if any(k in loc_lower for k in NYC_TOKENS):
         return True
-    if any(k in desc_lower for k in NYC_TOKENS):
-        return True
+    if any(c in loc_lower for c in _EXCLUDE_CITIES):
+        return False
     if "remote" in loc_lower:
-        # Candidate profile is explicitly open to remote-only, regardless of city.
+        # Profiles that say they're open to remote take it regardless of city.
         return True
-    # "Hybrid" alone (or an empty/unrecognized location) doesn't tell us the
-    # office city — a bare "Hybrid" tag usually means hybrid-at-HQ, which for
-    # most tracked companies isn't NYC. Only pass if NYC was named somewhere.
+
+    # Only fall back to the description when the location field names no city at
+    # all — a bare "Hybrid" tag, or nothing. Scanning the description otherwise
+    # lets a Stockholm role through on boilerplate that happens to mention an
+    # office in your city.
+    if not loc_lower or "hybrid" in loc_lower:
+        return any(k in desc_lower for k in NYC_TOKENS)
+
+    # Location names some other city.
     return False
 
 def url_hash(url):
@@ -288,8 +280,9 @@ def scrape_ashby(company_name, careers_url, cur):
 
 
 def run():
-    with open(PORTALS_PATH) as f:
-        portals = yaml.safe_load(f)
+    portals = load_portals()
+    if portals is None:
+        return
 
     companies = [c for c in portals.get("tracked_companies", []) if c.get("enabled", True)]
     print(f"Scanning {len(companies)} companies...\n")
@@ -329,34 +322,24 @@ def run():
     print("Next: python scoring/evaluate.py")
 
 def run_extra():
-    """Scrape additional companies with known API slugs not in portals.yml."""
+    """Scrape extra companies listed by ATS slug in the portals config.
 
-    EXTRA_GREENHOUSE = {
-        # Sony Music Entertainment, Luminate now wired directly in portals.yml — scraped via run()
-        # anchor bench — verify each token returns 200 before adding
-        "Datadog":                  "datadog",
-        "MongoDB":                  "mongodb",
-        "Squarespace":              "squarespace",
-        "Peloton":                  "peloton",
-        "Betterment":     "betterment",
-        "Justworks":      "justworks",
-        "Yext":           "yext",
-        "Braze":          "braze",
-        "Attentive":      "attentive",
-        "DoubleVerify":   "doubleverify",
-        "Rent the Runway": "renttherunway",
-        "Sisense":        "sisense",
-        "Dataiku":        "dataiku",
-    }
+    A shorthand for companies you want scanned without writing a full
+    tracked_companies entry — just the board slug. Configure them under an
+    `extra_companies:` key with `greenhouse`, `lever`, and/or `ashby` maps of
+    "Display Name": "board-slug". Verify a slug returns HTTP 200 before adding it.
+    """
+    portals = load_portals()
+    if portals is None:
+        return
 
-    EXTRA_ASHBY = {
-        # Substack now wired directly in portals.yml — scraped via run()
-        "Ramp": "ramp",
-    }
+    extra            = portals.get("extra_companies") or {}
+    EXTRA_GREENHOUSE = extra.get("greenhouse") or {}
+    EXTRA_ASHBY      = extra.get("ashby") or {}
+    EXTRA_LEVER      = extra.get("lever") or {}
 
-    EXTRA_LEVER = {
-        # The Athletic (NYT), JustWatch now wired directly in portals.yml — scraped via run()
-    }
+    if not (EXTRA_GREENHOUSE or EXTRA_ASHBY or EXTRA_LEVER):
+        return
 
     con = sqlite3.connect(DB_PATH)
     cur = con.cursor()

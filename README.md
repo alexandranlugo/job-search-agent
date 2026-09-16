@@ -45,7 +45,8 @@ Roles scoring 3.5+ are surfaced in the digest with a resume attached. Everything
 ```
 job-search-agent/
 ├── ingestion/
-│   ├── scrape_builtinnyc.py   # Built In NYC scraper (pagination, NYC/seniority filtering)
+│   ├── filters.py             # Shared title/location filter config loading
+│   ├── scrape_builtinnyc.py   # Built In NYC scraper (pagination, location/seniority filtering)
 │   ├── scrape_greenhouse.py   # Greenhouse, Lever, Ashby API scrapers
 │   ├── scrape_wellfound.py    # Wellfound scraper (cookie auth)
 │   └── add_job.py             # Manually add any job URL for scoring
@@ -59,7 +60,8 @@ job-search-agent/
 │   └── tracker.py             # Application tracker UI
 ├── db/
 │   └── init_db.py             # SQLite schema
-├── config/                    # cv.md and profile.yml (not committed)
+├── config/                    # your cv.md, profile.yml, portals.yml (gitignored)
+│   └── *.example.*            # copy these to get started
 ├── scripts/
 │   ├── html2pdf.py            # Batch-render saved resume HTML to PDF
 │   └── ...                    # Debug and one-off setup utilities
@@ -76,11 +78,47 @@ cd job-search-agent
 pip install -r requirements.txt
 playwright install chromium
 
-cp .env.example .env
-# Fill in ANTHROPIC_API_KEY and (optionally) Wellfound/email credentials
-
 python db/init_db.py
-python scripts/test_api.py
+```
+
+### Make it yours
+
+Nothing about the candidate is hardcoded — the scorer, resume writer, and cover
+letter writer all read the three config files below. Copy each example and edit it:
+
+```bash
+cp .env.example                  .env
+cp config/cv.example.md          config/cv.md
+cp config/profile.example.yml    config/profile.yml
+cp config/portals.example.yml    config/portals.yml
+```
+
+| File | What it controls |
+|------|------------------|
+| `.env` | `ANTHROPIC_API_KEY` (required), Gmail address + [App Password](https://myaccount.google.com/apppasswords) to email yourself the digest |
+| `config/cv.md` | Your resume in plain markdown. Injected verbatim into every prompt — the generator never invents experience, so anything missing here won't appear |
+| `config/profile.yml` | Target roles, salary range and floor, location preferences, scoring nudges. This is what postings are actually judged against |
+| `config/portals.yml` | Which companies to scrape, and the title/location keywords that gate everything before scoring |
+
+All four are gitignored, so your details never end up in a commit.
+
+Retargeting to a different field is a config change, not a code change — swap the
+keywords in `portals.yml` (`title_filter.positive`) and the target roles in
+`profile.yml`, and the pipeline follows.
+
+**Adding companies.** Find a company's board slug from its careers URL, verify it
+returns HTTP 200, then add it to `portals.yml`:
+
+```
+Greenhouse   https://boards-api.greenhouse.io/v1/boards/<slug>/jobs
+Lever        https://api.lever.co/v0/postings/<slug>?mode=json
+Ashby        https://api.ashbyhq.com/posting-api/job-board/<slug>
+```
+
+Then confirm the whole thing runs:
+
+```bash
+bash run_pipeline.sh
 ```
 
 ## Usage
@@ -95,6 +133,13 @@ Or let the cron job run it at 7AM daily:
 (crontab -l; echo "0 7 * * * /path/to/job-search-agent/run_pipeline.sh") | crontab -
 ```
 
+cron runs with a minimal `PATH` and won't see a conda or venv interpreter. If the
+cron run fails but a manual run works, point it at the right Python explicitly:
+
+```bash
+PYTHON=/path/to/your/python bash run_pipeline.sh
+```
+
 Open today's digest:
 ```bash
 open output/digests/digest_$(date +%Y-%m-%d).html
@@ -104,10 +149,6 @@ Add a specific job posting manually:
 ```bash
 python ingestion/add_job.py <job-url>
 ```
-
-## Configuration
-
-Target companies live in `portals.yml` and title/CV/profile targeting lives in `config/profile.yml` and `config/cv.md` (all shared with [career-ops](https://github.com/santifer/career-ops), not committed to this repo).
 
 ## Why I built this
 

@@ -1,0 +1,70 @@
+# Candidate profile — drives scoring, resume tailoring, and cover letters.
+#
+#   cp config/profile.example.yml config/profile.yml
+#
+# Replace every value below with your own. The scoring prompt reads this file
+# directly: your target roles, comp expectations, and location preferences are
+# what postings get judged against, so vague values produce vague scores.
+
+candidate:
+  full_name: "Your Name"
+  email: "you@example.com"
+  phone: ""                      # optional — leave blank to omit from resumes
+  location: "City, ST"
+  linkedin: "linkedin.com/in/yourhandle"
+  portfolio_url: "https://yoursite.com"
+  github: "github.com/yourhandle"
+
+target_roles:
+  primary:
+    - "Data Analyst"
+    - "Product Analyst"
+    - "Insights Analyst"
+  # Optional. If present, the scorer classifies postings into these instead of
+  # its built-in taxonomy. `fit` is primary or secondary.
+  archetypes:
+    - name: "Product Analyst"
+      level: "Entry/Junior"
+      fit: "primary"
+    - name: "BI Analyst"
+      level: "Entry/Junior"
+      fit: "secondary"
+
+narrative:
+  headline: "One line on who you are and the value you bring"
+  # A few sentences of context the resume/cover-letter writer can draw on.
+  exit_story: |
+    What you've done, what you're moving toward, and why. Concrete beats generic —
+    name real systems, real numbers, real outcomes.
+  superpowers:
+    - "The thing you're unusually good at, stated plainly"
+    - "A second one, ideally with evidence behind it"
+  proof_points:
+    - name: "Project or role name"
+      hero_metric: "The number that makes it land — revenue, users, % change"
+
+compensation:
+  target_range: "$90K-$110K"     # what you actually want
+  currency: "USD"
+  minimum: "$80K"                # below this, postings score 1.5 on comp
+  location_flexibility: "Hybrid or remote; open to on-site locally."
+
+location:
+  country: "United States"
+  city: "New York, NY"
+  timezone: "ET"
+  visa_status: "No sponsorship needed"
+  relocation: "Not relocating"
+
+cv:
+  output_format: "html"
+
+# Nudges applied on top of the base score.
+scoring_adjustments:
+  boost_if:
+    - "industry or domain you genuinely care about"
+    - "stakeholder-facing or cross-functional work"
+  flag_if:
+    - "no stakeholder-facing work mentioned"
+    - "core tool you don't have listed as required"
+  minimum_score_to_apply: 4.0

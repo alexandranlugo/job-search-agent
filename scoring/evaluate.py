@@ -37,7 +37,10 @@ def load_file(path):
         return f.read()
 
 def score_posting(cv, profile, posting):
-    prompt = f"""You are the career-ops evaluation engine. Evaluate this job posting using the career-ops scoring framework.
+    prompt = f"""You are a job-fit evaluation engine. Evaluate this job posting against the candidate below.
+
+Everything you need about the candidate is in the CV and profile sections — do not
+assume any background, target role, location, or salary expectation that isn't stated there.
 
 ## Candidate CV
 {cv}
@@ -61,15 +64,16 @@ Score each dimension 1-5, then compute a weighted global score:
 
 | Dimension | Weight | What to measure |
 |-----------|--------|-----------------|
-| cv_match | 40% | Skills, experience, proof points alignment. Does she have 70%+ of required skills? Check Python, SQL, Tableau, PowerBI, BigQuery, Snowflake, A/B testing, ML. |
-| north_star | 25% | How well does this fit her target archetypes. Score 4.5+ if: role title is Data Analyst, Product Analyst, Insights Analyst, Growth Analyst, Marketing Analyst, or Analytics Engineer AND requires SQL + Python + dashboarding. Score 3.5-4.0 if role is adjacent (Business Analyst, Operations Analyst, Reporting Analyst) with strong analytics component. Score 2.0-3.0 if role is a stretch (pure data science, pure engineering). Boost +0.5 if company is in media/music/entertainment/edtech/streaming/gaming/culture. |
-| comp | 15% | Salary vs her target $90K-$110K NYC, floor $80K. If no salary listed score 3.0 — unknown comp is neutral, not a penalty. If listed and $90K-$130K score 4.5-5. If listed $80K-$90K score 3.5. If below $80K score 1.5 — under her floor. If above $130K score 3.0 — may signal a senior hire, not an automatic penalty. |
-| culture | 10% | Remote/hybrid policy, cross-functional work, creative/consumer company, stakeholder-facing role. |
-| red_flags | 10% | Title rules: \"Senior\", \"Staff\", \"Lead\", \"II\", \"III\", \"Principal\" in title = score 1.0. \"Junior\", \"Associate\", \"Entry\" in title = score 4.5. Plain title with no seniority qualifier at all (e.g. just \"Data Analyst\" or \"Data Scientist\") = score 3.5 — absence of a junior qualifier is not itself a seniority signal, most entry-level postings don't say \"Junior.\" Only deduct further for explicit hard signals: requires 3+ years stated outright, purely backend with no stakeholder work, on-site only outside NYC, missing core tools where the posting says required not preferred (Spark, Scala). |
+| cv_match | 40% | Skills, experience, and proof-point alignment against the CV above. Does the candidate have 70%+ of what the posting actually requires? Judge against the tools and methods that appear in their CV, not a fixed list. |
+| north_star | 25% | Fit against the target roles/archetypes in the profile above. Score 4.5+ if the title is one of their stated targets AND the core skills line up. Score 3.5-4.0 if adjacent (e.g. Business Analyst, Operations Analyst, Reporting Analyst) with a strong component of their core discipline. Score 2.0-3.0 if it's a stretch or a different function entirely. Apply any `scoring_adjustments.boost_if` signals from the profile as up to a +0.5 boost, and any `flag_if` signals as a deduction. |
+| comp | 15% | Salary vs the `compensation` block in the profile (target_range and minimum). If no salary is listed score 3.0 — unknown comp is neutral, not a penalty. Listed at or above target score 4.5-5. Listed slightly under target score 3.5. Below their stated minimum score 1.5. Well above target score 3.0 — may signal a more senior hire, not an automatic penalty. |
+| culture | 10% | Remote/hybrid policy vs the profile's location preferences, cross-functional and stakeholder-facing work, company type. |
+| red_flags | 10% | Title rules: \"Senior\", \"Staff\", \"Lead\", \"II\", \"III\", \"Principal\" in title = score 1.0. \"Junior\", \"Associate\", \"Entry\" in title = score 4.5. Plain title with no seniority qualifier at all (e.g. just \"Data Analyst\") = score 3.5 — absence of a junior qualifier is not itself a seniority signal, most entry-level postings don't say \"Junior.\" Only deduct further for explicit hard signals: required years of experience well above what the CV shows, purely backend work with no stakeholder component, on-site only outside the candidate's stated locations, or missing core tools the posting lists as required rather than preferred. |
 
 ## Archetype Detection
 
-Classify into one of these (use for match_reasons framing):
+If the profile lists target archetypes, classify into one of those. Otherwise fall
+back to this general analytics taxonomy (use for match_reasons framing):
 - Storytelling/Insights Analyst: narrative, communicate insights, stakeholder-facing
 - Product Analyst: A/B testing, funnels, product metrics, experimentation
 - Data Analyst Media/Culture: media, music, entertainment, culture, streaming
@@ -77,22 +81,6 @@ Classify into one of these (use for match_reasons framing):
 - BI Analyst: dashboards, reporting, stakeholder reporting
 - Junior Data Scientist: ML pipeline, NLP, statistical modeling
 - AI/ML Product Analyst: LLM evaluation, agentic workflows, model quality, AI product metrics
-
-## Candidate context
-- May 2026 NYU grad, GPA 3.6, Data Science + Business Studies
-- Passed NYT final round: live BigQuery SQL + A/B testing case study
-- Sallie Mae Chief Data Office (12 months): Python API integrations with Alation automating governance/metadata workflows; Tableau + Power BI dashboards adopted at senior leadership level, 30% BI adoption increase; contributed to enterprise data governance roadmap
-- Pfizer externship — AI-powered document intelligence: PyMuPDF parsing, OCR benchmarking, RAG pipeline with LlamaIndex/FAISS/Chroma, Gradio chatbot interface
-- micro1 (current, contract) — AI Training Expert: designs and evaluates agentic workflows and Evals for frontier coding models including OpenAI Codex; built five multi-step task environments across specification levels (data pipeline failure, resource allocation, governance notifications, skill gap tracking, CDO roadmap synthesis); invited to a 1:1 session with OpenAI's Frontier Evals team
-- Total professional analytics experience: ~2 years across Sallie Mae, Pfizer externship, and concurrent micro1 contract work
-- Cookie Cats A/B test: $246K revenue impact, 90,189 players, bootstrap resampling
-- GA4 project: $17.7K recovery opportunity, 270,000 users, cohort analysis in BigQuery
-- Streaming vs Theatrical: 2,437% ROI differential, 530 movies, Tableau dashboards
-- Cultural Pulse Predictor: Airflow + BigQuery + NLP music trend forecasting pipeline (in progress)
-- Regional Music DNA: 500K+ streams, Spotify API + Census data pipeline
-- Full stack: Python, R, SQL, BigQuery, Snowflake, Tableau, PowerBI, Scikit-Learn, PyTorch
-- Bilingual EN/ES
-- In NYC from late August 2026, available immediately. Seeking hybrid or on-site NYC; open to remote.
 
 ## Score interpretation
 - 4.5+ = Strong match, apply immediately
@@ -110,10 +98,10 @@ Return ONLY a JSON object with exactly these fields, no other text:
   "red_flags": <float 1-5>,
   "score": <weighted global score: cv_match*0.4 + north_star*0.25 + comp*0.15 + culture*0.1 + red_flags*0.1>,
   "grade": <"A" if score>=4.5, "B" if >=4.0, "C" if >=3.5, "D" if >=3.0, "F" otherwise>,
-  "match_reasons": [<top 3 specific reasons this role fits Alexandra, citing her actual proof points>],
+  "match_reasons": [<top 3 specific reasons this role fits the candidate, citing their actual proof points from the CV>],
   "gaps": [<top 2 genuine gaps or hard blockers>],
-  "mitigation": "<one sentence on how Alexandra addresses the gaps>",
-  "outreach_draft": "<3-sentence LinkedIn message from Alexandra to a recruiter at this company. Mention the specific role title, reference one specific proof point from her CV that maps to this role, and express genuine interest. Warm and direct, not generic. Do not share her phone number.>"
+  "mitigation": "<one sentence on how the candidate addresses the gaps>",
+  "outreach_draft": "<3-sentence LinkedIn message from the candidate to a recruiter at this company, written in first person. Mention the specific role title, reference one specific proof point from their CV that maps to this role, and express genuine interest. Warm and direct, not generic. Never include a phone number or home address.>"
 }}"""
 
     response = client.messages.create(

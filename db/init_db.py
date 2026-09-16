@@ -33,9 +33,15 @@ def init():
             resume_path     TEXT,
             outreach_draft  TEXT,
             evaluated_at    TEXT DEFAULT (datetime('now')),
-            surfaced        INTEGER DEFAULT 0
+            surfaced        INTEGER DEFAULT 0,
+            digested_at     TEXT
         )
     """)
+    # Older databases predate digested_at — add it in place so the digest can
+    # tell which roles have already been sent.
+    cols = [r[1] for r in cur.execute("PRAGMA table_info(evaluations)").fetchall()]
+    if "digested_at" not in cols:
+        cur.execute("ALTER TABLE evaluations ADD COLUMN digested_at TEXT")
     cur.execute("""
         CREATE TABLE IF NOT EXISTS applications (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
